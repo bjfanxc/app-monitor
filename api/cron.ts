@@ -48,8 +48,8 @@ export default async function handler(req: CronRequest, res: CronResponse) {
       return res.status(401).json({ error: 'Unauthorized' })
     }
 
-    const supabaseUrl = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    const supabaseUrl = process.env.VITE_SUPABASE_URL
+    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY
 
     if (!supabaseUrl || !supabaseKey) {
       throw new Error('Missing Supabase configuration')
