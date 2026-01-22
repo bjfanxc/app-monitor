@@ -39,7 +39,7 @@ const saveSettings = () => {
           </div>
           <div class="lg:col-span-2 space-y-2">
             <label class="text-sm font-medium text-gray-700">接收邮箱 (管理者)</label>
-            <Input v-model="settings.adminEmail" placeholder="请输入邮箱地址" class="h-11" />
+            <Input v-model="settings.adminEmail" placeholder="请输入邮箱地址" class="h-12" />
           </div>
         </div>
 

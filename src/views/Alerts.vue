@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { Search } from 'lucide-vue-next'
+import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
 import Pagination from '@/components/ui/Pagination.vue'
 import { supabase } from '@/lib/supabase'
@@ -20,6 +21,7 @@ const loading = ref(false)
 const totalAlerts = ref(0)
 const currentPage = ref(1)
 const pageSize = 10
+const searchQuery = ref('')
 
 const skeletonRows = Array.from({ length: 6 }, (_, index) => index)
 
@@ -28,11 +30,18 @@ const fetchAlerts = async () => {
   const from = (currentPage.value - 1) * pageSize
   const to = from + pageSize - 1
 
-  const { data, count, error } = await supabase
+  let query = supabase
     .from('alerts')
     .select('*', { count: 'exact' })
     .order('alert_time', { ascending: false })
     .range(from, to)
+
+  if (searchQuery.value.trim()) {
+    const term = searchQuery.value.trim()
+    query = query.or(`app_name.ilike.%${term}%,package_id.ilike.%${term}%`)
+  }
+
+  const { data, count, error } = await query
 
   if (error) {
     console.error('Error fetching alerts:', error)
@@ -48,6 +57,17 @@ const handlePageChange = (page: number) => {
   fetchAlerts()
 }
 
+const handleSearch = () => {
+  currentPage.value = 1
+  fetchAlerts()
+}
+
+watch(searchQuery, (newValue) => {
+  if (newValue === '') {
+    handleSearch()
+  }
+})
+
 onMounted(() => {
   fetchAlerts()
 })
@@ -60,9 +80,19 @@ onMounted(() => {
         <h1 class="text-2xl font-bold text-gray-900">告警记录</h1>
         <p class="text-sm text-gray-500">查看最近告警与触发时间，支持分页浏览</p>
       </div>
-      <div class="relative w-full sm:w-80">
-        <Search class="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-        <Input placeholder="搜索应用或包名" class="pl-9" />
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end w-full sm:w-auto">
+        <div class="relative w-full sm:w-80">
+          <Search class="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+          <Input
+            v-model="searchQuery"
+            @keyup.enter="handleSearch"
+            placeholder="搜索应用或包名"
+            class="pl-9"
+          />
+        </div>
+        <Button variant="outline" class="w-full sm:w-auto" @click="handleSearch">
+          查询
+        </Button>
       </div>
     </div>
 

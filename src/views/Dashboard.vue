@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
-import { Plus, Search, MoreHorizontal, Activity, CheckCircle2, AlertTriangle, X } from 'lucide-vue-next'
+import { computed, ref, onMounted, watch } from 'vue'
+import { Plus, Search, Activity, CheckCircle2, AlertTriangle, X, Pencil } from 'lucide-vue-next'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
 import Modal from '@/components/ui/Modal.vue'
@@ -13,8 +13,15 @@ interface App {
   package_id: string
   platform: string
   region: string
+  alert_group: string
   status: 'Online' | 'Removed' | 'Error'
   last_check: string
+}
+
+interface TelegramAlertConfigBrief {
+  id: string
+  name: string
+  enabled: boolean
 }
 
 const apps = ref<App[]>([])
@@ -24,12 +31,30 @@ const currentPage = ref(1)
 const pageSize = 10
 const searchQuery = ref('')
 
+const alertGroups = ref<string[]>(['System'])
+
 // Stats
 const stats = ref({
   total: 0,
   online: 0,
   removed: 0
 })
+
+const fetchAlertGroups = async () => {
+  const { data, error } = await supabase
+    .from('telegram_alert_configs')
+    .select('id,name,enabled')
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    alertGroups.value = ['System']
+    return
+  }
+
+  const rows = (data ?? []) as TelegramAlertConfigBrief[]
+  const names = rows.filter(r => r.enabled).map(r => r.name).filter(name => name !== 'System')
+  alertGroups.value = ['System', ...names]
+}
 
 const fetchStats = async () => {
   const { data, error } = await supabase.from('apps').select('status')
@@ -97,35 +122,121 @@ watch(searchQuery, (newValue) => {
 onMounted(() => {
   fetchApps()
   fetchStats()
+  fetchAlertGroups()
 })
 
 const isAddModalOpen = ref(false)
+const addAppErrorMessage = ref<string | null>(null)
+const addingApp = ref(false)
+const editingAppId = ref<string | null>(null)
+const togglingAppIds = ref<Record<string, boolean>>({})
 const newApp = ref({
   name: '',
   package_id: '',
   platform: 'Google Play',
-  region: 'US'
+  region: 'US',
+  alert_group: 'System'
 })
 
-const handleAddApp = async () => {
-  if (!newApp.value.name || !newApp.value.package_id) return
+const isEditingApp = computed(() => editingAppId.value !== null)
 
-  const { error } = await supabase.from('apps').insert([{
-    name: newApp.value.name,
-    package_id: newApp.value.package_id,
-    platform: newApp.value.platform,
-    region: newApp.value.region,
-    status: 'Online' // Default status
-  }])
+const isAddAppFormValid = computed(() => {
+  const name = newApp.value.name.trim()
+  const packageId = newApp.value.package_id.trim()
+  return name.length > 0 && packageId.length > 0
+})
 
-  if (error) {
-    console.error('Error adding app:', error)
-    alert('添加失败: ' + error.message)
-  } else {
-    isAddModalOpen.value = false
-    newApp.value = { name: '', package_id: '', platform: 'Google Play', region: 'US' }
+const closeAddAppModal = () => {
+  isAddModalOpen.value = false
+  addAppErrorMessage.value = null
+  editingAppId.value = null
+}
+
+const openCreateApp = () => {
+  editingAppId.value = null
+  addAppErrorMessage.value = null
+  newApp.value = { name: '', package_id: '', platform: 'Google Play', region: 'US', alert_group: 'System' }
+  isAddModalOpen.value = true
+}
+
+const openEditApp = (app: App) => {
+  editingAppId.value = app.id
+  addAppErrorMessage.value = null
+  newApp.value = {
+    name: app.name,
+    package_id: app.package_id,
+    platform: app.platform,
+    region: app.region,
+    alert_group: app.alert_group || 'System'
+  }
+  isAddModalOpen.value = true
+}
+
+const handleSaveApp = async () => {
+  const name = newApp.value.name.trim()
+  const packageId = newApp.value.package_id.trim()
+  if (!name || !packageId) {
+    addAppErrorMessage.value = '请填写应用名称和包名 / Bundle ID'
+    return
+  }
+
+  addingApp.value = true
+  addAppErrorMessage.value = null
+  try {
+    if (editingAppId.value) {
+      const { error } = await supabase
+        .from('apps')
+        .update({
+          name,
+          package_id: packageId,
+          platform: newApp.value.platform,
+          region: newApp.value.region,
+          alert_group: newApp.value.alert_group,
+        })
+        .eq('id', editingAppId.value)
+
+      if (error) {
+        addAppErrorMessage.value = error.message
+        return
+      }
+    } else {
+      const { error } = await supabase.from('apps').insert([{
+        name,
+        package_id: packageId,
+        platform: newApp.value.platform,
+        region: newApp.value.region,
+        alert_group: newApp.value.alert_group,
+        status: 'Online'
+      }])
+
+      if (error) {
+        addAppErrorMessage.value = error.message
+        return
+      }
+    }
+
+    closeAddAppModal()
+    newApp.value = { name: '', package_id: '', platform: 'Google Play', region: 'US', alert_group: 'System' }
     fetchApps()
     fetchStats()
+  } finally {
+    addingApp.value = false
+  }
+}
+
+const toggleAppEnabled = async (app: App) => {
+  const nextStatus: App['status'] = app.status === 'Online' ? 'Removed' : 'Online'
+  togglingAppIds.value = { ...togglingAppIds.value, [app.id]: true }
+  try {
+    const { error } = await supabase.from('apps').update({ status: nextStatus }).eq('id', app.id)
+    if (error) {
+      return
+    }
+    await fetchApps()
+    await fetchStats()
+  } finally {
+    const { [app.id]: _removed, ...rest } = togglingAppIds.value
+    togglingAppIds.value = rest
   }
 }
 
@@ -146,7 +257,7 @@ const skeletonRows = Array.from({ length: 6 }, (_, index) => index)
         <p class="text-sm text-gray-500">实时查看监控应用状态与最近检测结果</p>
       </div>
       <div class="flex items-center gap-3">
-        <Button @click="isAddModalOpen = true">
+        <Button @click="openCreateApp">
           <Plus class="w-4 h-4 mr-2" />
           添加应用
         </Button>
@@ -277,7 +388,7 @@ const skeletonRows = Array.from({ length: 6 }, (_, index) => index)
                     <Button v-if="searchQuery.trim()" variant="outline" @click="searchQuery = ''">
                       清空搜索
                     </Button>
-                    <Button @click="isAddModalOpen = true">
+                    <Button @click="openCreateApp">
                       <Plus class="w-4 h-4 mr-2" />
                       添加应用
                     </Button>
@@ -301,9 +412,20 @@ const skeletonRows = Array.from({ length: 6 }, (_, index) => index)
               </td>
               <td class="px-6 py-4 text-gray-500">{{ app.last_check ? new Date(app.last_check).toLocaleString() : '-' }}</td>
               <td class="px-6 py-4 text-right">
-                <Button variant="ghost" size="sm" class="text-gray-500">
-                  <MoreHorizontal class="w-4 h-4" />
-                </Button>
+                <div class="flex justify-end gap-2">
+                  <Button variant="outline" size="sm" @click="openEditApp(app)">
+                    <Pencil class="h-4 w-4 mr-1" />
+                    编辑
+                  </Button>
+                  <Button
+                    :variant="app.status === 'Online' ? 'danger' : 'primary'"
+                    size="sm"
+                    :disabled="Boolean(togglingAppIds[app.id])"
+                    @click="toggleAppEnabled(app)"
+                  >
+                    {{ app.status === 'Online' ? '下架' : '上架' }}
+                  </Button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -322,15 +444,21 @@ const skeletonRows = Array.from({ length: 6 }, (_, index) => index)
     </div>
 
     <!-- Add App Modal -->
-    <Modal :isOpen="isAddModalOpen" title="添加应用" @close="isAddModalOpen = false">
+    <Modal :isOpen="isAddModalOpen" :title="isEditingApp ? '编辑应用' : '添加应用'" @close="closeAddAppModal">
       <div class="space-y-6 flex flex-col h-full">
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-gray-700">应用名称</label>
-          <Input v-model="newApp.name" placeholder="请输入应用名称" class="h-12" />
+        <div class="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+          填写应用名称与包名/Bundle ID，平台与地区用于监控；告警群组决定被下架时通知到哪个群组。
+        </div>
+        <div v-if="addAppErrorMessage" class="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {{ addAppErrorMessage }}
         </div>
         <div class="space-y-2">
-          <label class="text-sm font-medium text-gray-700">包名 / Bundle ID</label>
-          <Input v-model="newApp.package_id" placeholder="例如: com.example.app" class="h-12" />
+          <label class="text-sm font-medium text-gray-700">应用名称 <span class="text-rose-600">*</span></label>
+          <Input v-model="newApp.name" placeholder="请输入应用名称" class="h-12" required aria-required="true" />
+        </div>
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-gray-700">包名 / Bundle ID <span class="text-rose-600">*</span></label>
+          <Input v-model="newApp.package_id" placeholder="例如: com.example.app" class="h-12" required aria-required="true" />
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
           <div class="space-y-2">
@@ -350,10 +478,18 @@ const skeletonRows = Array.from({ length: 6 }, (_, index) => index)
               <option value="Global">全球 (Global)</option>
             </select>
           </div>
+          <div class="space-y-2 sm:col-span-2">
+            <label class="text-sm font-medium text-gray-700">告警群组</label>
+            <select v-model="newApp.alert_group" class="flex h-12 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
+              <option v-for="group in alertGroups" :key="group" :value="group">{{ group }}</option>
+            </select>
+          </div>
         </div>
         <div class="pt-2 flex justify-end gap-3 mt-auto">
-          <Button variant="secondary" @click="isAddModalOpen = false" size="lg">取消</Button>
-          <Button @click="handleAddApp" size="lg">确认添加</Button>
+          <Button variant="secondary" @click="closeAddAppModal" size="lg">取消</Button>
+          <Button @click="handleSaveApp" size="lg" :disabled="addingApp || !isAddAppFormValid">
+            {{ addingApp ? (isEditingApp ? '保存中...' : '添加中...') : (isEditingApp ? '保存' : '确认添加') }}
+          </Button>
         </div>
       </div>
     </Modal>

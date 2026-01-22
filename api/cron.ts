@@ -33,6 +33,7 @@ interface AppRow {
   package_id: string
   platform: string
   region: string
+  alert_group: string
 }
 
 export default async function handler(req: CronRequest, res: CronResponse) {
@@ -60,7 +61,7 @@ export default async function handler(req: CronRequest, res: CronResponse) {
     // 1. Get apps to check
     const { data: apps, error } = await supabase
       .from('apps')
-      .select('*')
+      .select('id,name,package_id,platform,region,alert_group')
       .eq('status', 'Online')
 
     if (error) throw error
@@ -102,12 +103,13 @@ export default async function handler(req: CronRequest, res: CronResponse) {
           }).eq('id', app.id)
 
           // Create Alert
+          const alertGroup = app.alert_group || 'System'
           await supabase.from('alerts').insert({
             app_name: app.name,
             package_id: app.package_id,
             platform: app.platform,
             region: app.region,
-            alert_group: 'System',
+            alert_group: alertGroup,
             alert_time: new Date().toISOString()
           })
 
